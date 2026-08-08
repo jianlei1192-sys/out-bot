@@ -1,4 +1,8 @@
+import os
+import asyncio
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,19 +16,29 @@ from telegram.ext import (
 # 内存数据库，按 Chat ID 隔离存储数据
 db = {}
 
+# 轻量级 HTTP 服务，用于通过 Render 的端口健康检查
+class DummyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), DummyServer)
+    server.serve_forever()
+
 def get_chat_data(chat_id: int):
-    """获取或初始化群组账目数据"""
     if chat_id not in db:
         db[chat_id] = {
-            "in_records": [],   # 入款记录
-            "out_records": [],  # 出款记录
-            "fee_rate": 0.0,    # 费率 (%)
-            "exchange_rate": 1.0 # 汇率
+            "in_records": [],
+            "out_records": [],
+            "fee_rate": 0.0,
+            "exchange_rate": 1.0
         }
     return db[chat_id]
 
 def generate_bill_text(chat_title: str, data: dict) -> str:
-    """生成账单文本"""
     in_records = data["in_records"]
     out_records = data["out_records"]
     fee_rate = data["fee_rate"]
@@ -158,7 +172,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
 if __name__ == "__main__":
-    import os
+    # 后台启动 HTTP 线程给 Render 检测端口
+    t = threading.Thread(target=run_dummy_server, daemon=True)
+    t.start()
+
     TOKEN = os.environ.get("BOT_TOKEN")
     app = ApplicationBuilder().token(TOKEN).build()
 
